@@ -5,3 +5,4 @@ numpy==1.23.5
 opencv-python-headless
 Pillow
 h5py
+python-multipart
