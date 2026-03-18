@@ -1,37 +1,48 @@
-import os
-import uvicorn
 from fastapi import FastAPI, File, UploadFile
 import numpy as np
 from PIL import Image
 import io
+
 from tensorflow.keras.models import load_model
 
+# Initialize app
 app = FastAPI()
 
+# Load model
 model = load_model("model.h5", compile=False)
 
+# Home route
 @app.get("/")
 def home():
-    return {"message": "API is running"}
+    return {"message": "Breast Cancer API is running"}
 
+# Prediction route
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
-    contents = await file.read()
+    try:
+        # Read image
+        image = Image.open(io.BytesIO(await file.read())).convert("RGB")
 
-    image = Image.open(io.BytesIO(contents)).convert("RGB")
-    image = image.resize((224, 224))
+        # Resize (IMPORTANT: same size as training)
+        image = image.resize((224, 224))
 
-    img_array = np.array(image) / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
+        # Convert to array
+        img_array = np.array(image) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
 
-    prediction = model.predict(img_array)
+        # Prediction
+        prediction = model.predict(img_array)
 
-    if prediction[0][0] > 0.5:
-        return {"prediction": "Malignant"}
-    else:
-        return {"prediction": "Benign"}
+        # Binary classification
+        if prediction[0][0] > 0.5:
+            result = "Malignant"
+        else:
+            result = "Benign"
 
+        return {
+            "prediction": result,
+            "confidence": float(prediction[0][0])
+        }
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    except Exception as e:
+        return {"error": str(e)}
