@@ -6,3 +6,4 @@ opencv-python-headless
 Pillow
 h5py
 python-multipart
+keras==2.12.0
