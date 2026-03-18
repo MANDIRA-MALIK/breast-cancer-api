@@ -7,8 +7,15 @@ import io
 
 app = FastAPI()
 
-# Load model
-model = tf.keras.models.load_model("model.h5")
+# Lazy load model (IMPORTANT for Render)
+model = None
+
+def load_model():
+    global model
+    if model is None:
+        model = tf.keras.models.load_model("model.h5")
+    return model
+
 
 # GradCAM function
 def get_gradcam(img_array, model, layer_name="Conv_1"):
@@ -22,36 +29,54 @@ def get_gradcam(img_array, model, layer_name="Conv_1"):
         loss = predictions[:, 0]
 
     grads = tape.gradient(loss, conv_outputs)
-    pooled_grads = tf.reduce_mean(grads, axis=(0,1,2))
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
 
     conv_outputs = conv_outputs[0]
     heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
 
-    heatmap = np.maximum(heatmap, 0) / np.max(heatmap)
+    heatmap = np.maximum(heatmap, 0)
+    heatmap /= np.max(heatmap) + 1e-8
+
     return heatmap
+
+
+@app.get("/")
+def home():
+    return {"message": "API is running 🚀"}
+
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
-    image = Image.open(file.file).convert("RGB")
-    img = image.resize((160,160))
+    try:
+        # Load model safely
+        model = load_model()
 
-    img_array = np.array(img)/255.0
-    img_array = np.expand_dims(img_array, axis=0)
+        # Read image
+        image = Image.open(file.file).convert("RGB")
+        img = image.resize((160, 160))
 
-    pred = model.predict(img_array)[0][0]
+        img_array = np.array(img) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
 
-    heatmap = get_gradcam(img_array, model)
+        # Prediction
+        pred = float(model.predict(img_array)[0][0])
 
-    heatmap = cv2.resize(heatmap, (image.size[0], image.size[1]))
-    heatmap = np.uint8(255 * heatmap)
-    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+        # GradCAM
+        heatmap = get_gradcam(img_array, model)
 
-    superimposed = heatmap * 0.4 + np.array(image)
+        heatmap = cv2.resize(heatmap, (image.size[0], image.size[1]))
+        heatmap = np.uint8(255 * heatmap)
+        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
 
-    _, buffer = cv2.imencode(".jpg", superimposed)
+        superimposed = heatmap * 0.4 + np.array(image)
 
-    return {
-        "prediction": float(pred),
-        "gradcam": buffer.tobytes().hex()
-    }
+        _, buffer = cv2.imencode(".jpg", superimposed)
+
+        return {
+            "prediction": pred,
+            "gradcam": buffer.tobytes().hex()
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
